@@ -168,7 +168,7 @@ def ganador_equipo_por_regla(resultado: str, actor: str, provocador: str, eq1: L
 
 
 # ==========================
-# Compartir (Opción 1): abrir mail/whatsapp y adjuntar manual
+# Compartir (Guía móvil/tablet)
 # ==========================
 def normalizar_whatsapp(numero: str) -> str:
     return re.sub(r"\D", "", numero or "")
@@ -188,14 +188,19 @@ def whatsapp_link(phone_digits: str, message: str) -> str:
     return f"https://wa.me/?text={msg_q}"
 
 
-def ui_compartir_excel(excel_file: str):
+def ui_compartir_excel_con_guia(excel_file: str):
     if not os.path.exists(excel_file):
         st.info("Todavía no hay Excel para compartir.")
         return
 
-    st.subheader("📤 Compartir Excel")
-    st.caption("Se abrirá Email o WhatsApp con el mensaje. Luego adjunta el Excel manualmente.")
+    st.subheader("📤 Compartir Excel (móvil/tablet)")
+    st.caption(
+        "Por seguridad, **Email y WhatsApp NO permiten adjuntar archivos automáticamente desde un link**. "
+        "Por eso el flujo correcto es: **descargar primero** y luego **adjuntar manualmente**."
+    )
 
+    # Paso 1: descargar
+    st.markdown("### ✅ Paso 1: Descarga el Excel")
     with open(excel_file, "rb") as f:
         st.download_button(
             "⬇️ Descargar Excel",
@@ -205,6 +210,15 @@ def ui_compartir_excel(excel_file: str):
             key="dl_excel_share",
         )
 
+    st.info(
+        "📱 **Dónde queda el archivo descargado**\n\n"
+        "- **iPhone/iPad:** App **Archivos** → *Descargas* (o iCloud Drive/En mi iPhone según el navegador)\n"
+        "- **Android:** **Files/Archivos** → *Downloads/Descargas*\n\n"
+        "Luego podrás adjuntarlo desde WhatsApp o desde la app de correo."
+    )
+
+    # Paso 2: elegir canal
+    st.markdown("### ✅ Paso 2: Elige cómo enviarlo")
     asunto = "Resumen Partido Padel"
     mensaje_default = "Te comparto el resumen del partido. Adjunté el Excel."
 
@@ -212,9 +226,15 @@ def ui_compartir_excel(excel_file: str):
 
     with tab_mail:
         email_to = st.text_input("Email destinatario", placeholder="ej: alguien@mail.com", key="share_email_to")
-        cuerpo = st.text_area("Mensaje", value=mensaje_default, height=100, key="share_email_body")
+        cuerpo = st.text_area("Mensaje", value=mensaje_default, height=120, key="share_email_body")
         link = mailto_link(asunto, cuerpo, email_to.strip())
         st.link_button("📧 Abrir Email", link, use_container_width=True)
+
+        st.markdown("### ✅ Paso 3: Adjunta el Excel en la app de correo")
+        st.markdown(
+            "- **iPhone/iPad (Mail):** botón **Adjuntar** → **Archivos** → busca el Excel.\n"
+            "- **Android (Gmail/Correo):** clip **📎** → **Adjuntar archivo** → **Descargas**."
+        )
 
     with tab_wa:
         phone = st.text_input(
@@ -222,10 +242,17 @@ def ui_compartir_excel(excel_file: str):
             placeholder="ej: +34 600 111 222",
             key="share_wa_phone",
         )
-        wa_msg = st.text_area("Mensaje", value=mensaje_default, height=100, key="share_wa_msg")
+        wa_msg = st.text_area("Mensaje", value=mensaje_default, height=120, key="share_wa_msg")
         phone_digits = normalizar_whatsapp(phone)
         link = whatsapp_link(phone_digits, wa_msg)
         st.link_button("💬 Abrir WhatsApp", link, use_container_width=True)
+
+        st.markdown("### ✅ Paso 3: Adjunta el Excel en WhatsApp")
+        st.markdown(
+            "- En el chat, toca el **clip 📎**\n"
+            "- Elige **Documento**\n"
+            "- Busca el Excel en **Archivos/Descargas** y envíalo."
+        )
 
 
 # ==========================
@@ -306,11 +333,6 @@ def advance_server_game(eq1: List[str], eq2: List[str]):
 # TB: sacador automático (1,2,2,2...)
 # ==========================
 def tb_server_for_point(tb_point_index: int, rotation: List[str], start_idx: int) -> str:
-    """
-    rotation: lista de 4 jugadores en orden
-    start_idx: índice del jugador que saca el punto 0
-    patrón: 1,2,2,2...
-    """
     if not rotation:
         return ""
     if tb_point_index < 0:
@@ -319,7 +341,7 @@ def tb_server_for_point(tb_point_index: int, rotation: List[str], start_idx: int
     if tb_point_index == 0:
         turn = 0
     else:
-        turn = 1 + (tb_point_index - 1) // 2  # 1,1,2,2,3,3...
+        turn = 1 + (tb_point_index - 1) // 2
     idx = (start_idx + turn) % len(rotation)
     return rotation[idx]
 
@@ -337,7 +359,6 @@ def ensure_tb_current_server(eq1: List[str], eq2: List[str]):
         st.session_state.server_team = 0
         return
 
-    # SUPER TB antes de elegir 2º sacador: rotation=[first] solo válido para punto 0
     if len(rotation) < 4:
         srv = rotation[0]
         st.session_state.current_server = srv
@@ -361,11 +382,10 @@ def reset_match():
     st.session_state.adv = 0
 
     st.session_state.in_tb = False
-    st.session_state.tb_tipo = ""  # "SET" / "SUPER" / ""
+    st.session_state.tb_tipo = ""
     st.session_state.tb_target = 0
     st.session_state.tb_pts = [0, 0]
 
-    # TB auto
     st.session_state.tb_rotation = []
     st.session_state.tb_start_idx = 0
     st.session_state.super_tb_first = ""
@@ -398,11 +418,9 @@ def _activar_tb(tipo: str, target: int, eq1: List[str], eq2: List[str]):
     st.session_state.tb_tipo = tipo
     st.session_state.tb_target = target
     st.session_state.tb_pts = [0, 0]
-
     reset_star_game_state()
 
     if tipo == "SET":
-        # TB de set: orden del set y empieza el "siguiente sacador del set"
         if st.session_state.server_order:
             next_idx = (st.session_state.server_index + 1) % 4
             st.session_state.tb_rotation = list(st.session_state.server_order)
@@ -410,11 +428,9 @@ def _activar_tb(tipo: str, target: int, eq1: List[str], eq2: List[str]):
         else:
             st.session_state.tb_rotation = []
             st.session_state.tb_start_idx = 0
-
         st.session_state.super_tb_ready = True
 
     elif tipo == "SUPER":
-        # SUPER TB: pedir 1º sacador (punto 0) y luego 2º sacador (antes del punto 1)
         st.session_state.tb_rotation = []
         st.session_state.tb_start_idx = 0
         st.session_state.super_tb_first = ""
@@ -510,7 +526,7 @@ def actualizar_marcador(eq_gana_punto: int, modo_deuce: str, eq1: List[str], eq2
         a, b = st.session_state.tb_pts
         tgt = st.session_state.tb_target
 
-        # ✅ Confirmado: gana cuando llega a tgt con diferencia 2 (SET:7 / SUPER:11)
+        # gana cuando llega a tgt con diferencia 2
         if (a >= tgt or b >= tgt) and abs(a - b) >= 2:
             _terminar_tb_y_aplicar_ganador(eq_gana_tb=eq_gana_punto)
         return
@@ -568,7 +584,7 @@ def actualizar_marcador(eq_gana_punto: int, modo_deuce: str, eq1: List[str], eq2
 
 
 # ==========================
-# Excel (robusto + cronológico): guardar eventos ABAJO
+# Excel (robusto + cronológico)
 # ==========================
 def get_excel_file() -> str:
     return st.session_state.excel_file
@@ -621,7 +637,6 @@ def _aplicar_formato_fecha(excel_file: str):
 def guardar_excel(eventos_df: pd.DataFrame):
     excel_file = get_excel_file()
 
-    # si existe corrupto -> borrar
     if os.path.exists(excel_file) and not _is_valid_xlsx(excel_file):
         try:
             os.remove(excel_file)
@@ -652,9 +667,6 @@ def insertar_evento_abajo(row: dict):
     guardar_excel(df_out)
 
 
-# ==========================
-# Resumen (por set + total)
-# ==========================
 def generar_resumen(eventos: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if eventos.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -755,7 +767,6 @@ def start_timer_if_needed():
 def validar_punto(eq1: List[str], eq2: List[str], modo_deuce: str) -> Optional[str]:
     jugadores_set = set(eq1 + eq2)
 
-    # sacador siempre debe estar definido (en TB es auto, salvo super TB antes del 1º sacador)
     if not st.session_state.current_server:
         if st.session_state.in_tb and st.session_state.tb_tipo == "SUPER":
             return "Falta elegir sacador (Super TB)."
@@ -779,7 +790,6 @@ def validar_punto(eq1: List[str], eq2: List[str], modo_deuce: str) -> Optional[s
     if not golpe:
         return "Falta seleccionar el golpe."
 
-    # Winner + Saque: actor auto, sin asistencia
     if res == "Winner" and golpe == "Saque":
         return None
 
@@ -905,13 +915,6 @@ def registrar_evento(eq1: List[str], eq2: List[str], modo_deuce: str):
     }
 
     insertar_evento_abajo(row_point)
-
-    # ✅ SUPER TB: después del punto 0, obligar a elegir 2º sacador antes de seguir
-    if st.session_state.in_tb and st.session_state.tb_tipo == "SUPER":
-        tb_idx_after = st.session_state.tb_pts[0] + st.session_state.tb_pts[1]
-        if tb_idx_after >= 1 and st.session_state.super_tb_first and not st.session_state.super_tb_second:
-            st.session_state.need_super_tb_second_now = True
-
     reset_punto()
     st.success(f"Punto registrado. Ganó Equipo {eq_ganador} (auto).")
 
@@ -922,7 +925,6 @@ def registrar_evento(eq1: List[str], eq2: List[str], modo_deuce: str):
 st.set_page_config(page_title="Padel Stats", layout="wide")
 inject_css()
 st.title("📊 Padel Stats — Registro por punto (local)")
-
 
 # Sidebar: nombre archivo
 st.sidebar.header("💾 Nombre del archivo")
@@ -939,7 +941,7 @@ st.session_state.excel_file = "_".join(parts) + ".xlsx"
 st.sidebar.write(f"Se guardará como: `{st.session_state.excel_file}`")
 st.sidebar.divider()
 
-# Sidebar: configuración jugadores / modos
+# Sidebar: configuración
 st.sidebar.header("⚙️ Configuración")
 p1 = st.sidebar.text_input("Equipo 1 - Jugador A", value="Jugador1", key="p1")
 p2 = st.sidebar.text_input("Equipo 1 - Jugador B", value="Jugador2", key="p2")
@@ -950,7 +952,7 @@ eq1 = [p1.strip(), p2.strip()]
 eq2 = [p3.strip(), p4.strip()]
 jugadores = unique_players(eq1, eq2)
 
-# ✅ Obligatorios (en blanco al inicio)
+# Obligatorios (en blanco al inicio)
 modo_deuce_ui = st.sidebar.selectbox(
     "Modo en 40-40",
     ["—", "Advantage", "Golden", "Star Point"],
@@ -963,21 +965,18 @@ formato_ui = st.sidebar.selectbox(
     index=0,
     key="formato_partido_ui",
 )
-
 st.session_state.modo_deuce = "" if modo_deuce_ui == "—" else modo_deuce_ui
 st.session_state.formato_partido = "" if formato_ui == "—" else formato_ui
-
 modo_deuce = st.session_state.get("modo_deuce", "")
 
 # Init
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
     st.session_state.show_share = False
-    st.session_state.need_super_tb_second_now = False
     reset_match()
     reset_punto()
 
-# ✅ Gate: no dejar empezar hasta completar obligatorios
+# Gate
 missing = []
 if not st.session_state.get("modo_deuce"):
     missing.append("Modo en 40-40")
@@ -996,9 +995,8 @@ if cB.button("🔁 Reset partido", use_container_width=True, key="btn_reset_matc
     reset_match()
     reset_punto()
     st.session_state.show_share = False
-    st.session_state.need_super_tb_second_now = False
 
-# Descargar excel (si existe)
+# Descargar excel
 st.sidebar.divider()
 excel_file = get_excel_file()
 if os.path.exists(excel_file) and _is_valid_xlsx(excel_file):
@@ -1007,7 +1005,7 @@ if os.path.exists(excel_file) and _is_valid_xlsx(excel_file):
 else:
     st.sidebar.info("Todavía no hay archivo (registra al menos 1 punto).")
 
-# Resumen + activar compartir
+# Resumen
 st.sidebar.divider()
 if st.sidebar.button("🏁 Finalizar partido: generar resumen", use_container_width=True, key="btn_fin_resumen"):
     eventos = leer_eventos()
@@ -1020,10 +1018,7 @@ if st.sidebar.button("🏁 Finalizar partido: generar resumen", use_container_wi
         st.sidebar.success("Resumen guardado en hoja 'Resumen'.")
         st.session_state.show_share = True
 
-
-# ==========================
 # Marcador
-# ==========================
 top1, top2 = st.columns([2, 3])
 with top1:
     st.subheader("🏁 Marcador")
@@ -1046,16 +1041,12 @@ with top2:
 
 st.divider()
 
-
-# ==========================
-# Sacador (AUTO por set y por tie-break)
-# ==========================
+# Sacador: set auto + TB auto (Set TB) + Super TB (manual 1º y luego 2º)
 st.subheader("1) Sacador (AUTO por set y por tie-break)")
 
 if st.session_state.in_tb:
     tb_idx = st.session_state.tb_pts[0] + st.session_state.tb_pts[1]
 
-    # SUPER TB: pedir 1º sacador solo para punto 0
     if st.session_state.tb_tipo == "SUPER" and tb_idx == 0 and not st.session_state.super_tb_first:
         st.warning("Super tie-break: elige el 1º sacador (solo para el primer punto).")
         segmented_toggle(
@@ -1067,11 +1058,10 @@ if st.session_state.in_tb:
             allow_clear=True,
         )
         if st.session_state.super_tb_first:
-            st.session_state.tb_rotation = [st.session_state.super_tb_first]  # temporal (solo punto 0)
+            st.session_state.tb_rotation = [st.session_state.super_tb_first]
             st.session_state.tb_start_idx = 0
         st.stop()
 
-    # SUPER TB: después de registrar el punto 0, pedir 2º sacador (del otro equipo)
     if st.session_state.tb_tipo == "SUPER" and tb_idx >= 1 and st.session_state.super_tb_first and not st.session_state.super_tb_second:
         team_first = equipo_de(st.session_state.super_tb_first, eq1, eq2)
         other_team_players = eq2 if team_first == 1 else eq1
@@ -1094,16 +1084,13 @@ if st.session_state.in_tb:
             st.session_state.tb_rotation = [first, second, third, fourth]
             st.session_state.tb_start_idx = 0
             st.session_state.super_tb_ready = True
-            st.session_state.need_super_tb_second_now = False
 
         st.stop()
 
-    # TB auto
     ensure_tb_current_server(eq1, eq2)
     st.info(f"Sacador TB (auto): **{st.session_state.current_server or '—'}**  | Orden: {st.session_state.tb_rotation}")
 
 else:
-    # Inicio set: elegir primer sacador
     if not st.session_state.first_server_of_set:
         st.warning("Inicio del set: elige sacador del **primer game** (cualquiera de los 4).")
         new, old = segmented_toggle(
@@ -1114,19 +1101,17 @@ else:
             key="seg_first_server_of_set",
             allow_clear=True,
         )
-        if new != old:
-            if st.session_state.first_server_of_set:
-                t = equipo_de(st.session_state.first_server_of_set, eq1, eq2)
-                st.session_state.team_first_server[t] = st.session_state.first_server_of_set
-                st.session_state.pending_other_team_pick = opuesto(t)
-                st.session_state.current_server = st.session_state.first_server_of_set
-                st.session_state.server_team = t
-                st.session_state.need_other_team_pick_now = False
-                st.session_state.server_index = 0
-                reset_punto()
+        if new != old and st.session_state.first_server_of_set:
+            t = equipo_de(st.session_state.first_server_of_set, eq1, eq2)
+            st.session_state.team_first_server[t] = st.session_state.first_server_of_set
+            st.session_state.pending_other_team_pick = opuesto(t)
+            st.session_state.current_server = st.session_state.first_server_of_set
+            st.session_state.server_team = t
+            st.session_state.need_other_team_pick_now = True
+            st.session_state.server_index = 0
+            reset_punto()
         st.stop()
 
-    # Elegir primer sacador del otro equipo (solo una vez)
     if st.session_state.need_other_team_pick_now and st.session_state.pending_other_team_pick in (1, 2):
         pending_team = st.session_state.pending_other_team_pick
         team_players = eq1 if pending_team == 1 else eq2
@@ -1141,29 +1126,23 @@ else:
             key=f"seg_pick_other_{pending_team}",
             allow_clear=True,
         )
-        if new != old:
-            chosen = st.session_state.get(state_key_other, "")
-            if chosen:
-                st.session_state.team_first_server[pending_team] = chosen
-                st.session_state.pending_other_team_pick = 0
-                st.session_state.need_other_team_pick_now = False
-                build_full_server_order(eq1, eq2)
-                st.session_state.server_index = 1
-                set_current_server_from_order(eq1, eq2)
-                reset_punto()
+        if new != old and st.session_state.get(state_key_other, ""):
+            st.session_state.team_first_server[pending_team] = st.session_state[state_key_other]
+            st.session_state.pending_other_team_pick = 0
+            st.session_state.need_other_team_pick_now = False
+            build_full_server_order(eq1, eq2)
+            st.session_state.server_index = 1
+            set_current_server_from_order(eq1, eq2)
+            reset_punto()
         st.stop()
 
-    # Orden completo => sacador auto
     if st.session_state.server_order:
         set_current_server_from_order(eq1, eq2)
         st.info(f"Sacador (auto): **{st.session_state.current_server}** — Orden set: {st.session_state.server_order}")
 
 st.divider()
 
-
-# ==========================
 # Star Point receptor
-# ==========================
 if is_star_golden_now(modo_deuce):
     st.warning("⭐ Star Point: este punto es GOLDEN. Elige receptor.")
     receiving_team = opuesto(equipo_de(st.session_state.current_server, eq1, eq2))
@@ -1179,23 +1158,17 @@ if is_star_golden_now(modo_deuce):
     st.write(f"Receptor: **{st.session_state.golden_receiver or '—'}**")
     st.divider()
 
-
-# ==========================
-# Estado del saque
-# ==========================
+# Estado saque
 st.subheader("1.1) Estado del saque (antes del resultado)")
-
 SAQUE_UI = ["✅ Saque correcto", "❌ Error 1er saque", "❌❌ Doble falta"]
-SAQUE_MAP_UI_TO_VAL = {
+MAP_UI_TO_VAL = {
     "✅ Saque correcto": "Correcto",
     "❌ Error 1er saque": "Primer error",
     "❌❌ Doble falta": "Doble falta",
     "": "",
 }
-SAQUE_MAP_VAL_TO_UI = {v: k for k, v in SAQUE_MAP_UI_TO_VAL.items() if v}
-
-old_internal = st.session_state.sel_saque_estado
-st.session_state._tmp_saque_ui = SAQUE_MAP_VAL_TO_UI.get(old_internal, "")
+MAP_VAL_TO_UI = {v: k for k, v in MAP_UI_TO_VAL.items() if v}
+st.session_state._tmp_saque_ui = MAP_VAL_TO_UI.get(st.session_state.sel_saque_estado, "")
 
 new_ui, _ = segmented_toggle(
     st,
@@ -1205,7 +1178,7 @@ new_ui, _ = segmented_toggle(
     key="seg_saque_estado",
     allow_clear=True,
 )
-st.session_state.sel_saque_estado = SAQUE_MAP_UI_TO_VAL.get(new_ui, "")
+st.session_state.sel_saque_estado = MAP_UI_TO_VAL.get(new_ui, "")
 
 if st.session_state.sel_saque_estado:
     start_timer_if_needed()
@@ -1220,14 +1193,11 @@ if st.session_state.sel_saque_estado == "Doble falta":
 
 st.divider()
 
-# Doble falta => guardar directo
 if st.session_state.sel_saque_estado == "Doble falta":
     st.subheader("✅ Guardar punto (Doble falta)")
     if st.button("Guardar doble falta (auto)", type="primary", use_container_width=True, key="guardar_df"):
         registrar_evento(eq1, eq2, modo_deuce)
-
 else:
-    # Resultado
     st.subheader("2) Resultado del punto")
     new_res, old_res = segmented_toggle(
         st,
@@ -1237,7 +1207,6 @@ else:
         key="seg_resultado",
         allow_clear=True,
     )
-
     if new_res != old_res:
         st.session_state.sel_actor = ""
         st.session_state.sel_provocador = ""
@@ -1246,7 +1215,6 @@ else:
         if new_res == "":
             st.session_state.sel_golpe = ""
 
-    # Golpe
     st.subheader("3) Tipo de golpe")
     segmented_toggle(
         st,
@@ -1257,7 +1225,6 @@ else:
         allow_clear=True,
     )
 
-    # Winner + Saque => auto actor, sin asistencia
     if st.session_state.sel_resultado == "Winner" and st.session_state.sel_golpe == "Saque":
         st.info(f"Winner de **saque**: Actor = sacador (**{st.session_state.current_server}**) y sin asistencia.")
         st.session_state.sel_actor = ""
@@ -1332,15 +1299,14 @@ else:
         registrar_evento(eq1, eq2, modo_deuce)
         after_games = tuple(st.session_state.games)
 
-        # si cerró un game y falta definir el primer sacador del otro equipo
         if (sum(after_games) > sum(before_games)) and (not st.session_state.server_order) and st.session_state.pending_other_team_pick in (1, 2):
             st.session_state.need_other_team_pick_now = True
 
 st.divider()
 
-# Compartir (aparece tras finalizar partido / generar resumen)
+# Mostrar guía de compartir tras generar resumen
 if st.session_state.get("show_share", False):
-    ui_compartir_excel(get_excel_file())
+    ui_compartir_excel_con_guia(get_excel_file())
     st.divider()
 
 st.subheader("📄 Últimos eventos guardados")
