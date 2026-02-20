@@ -33,6 +33,8 @@ PTS_TEXT = {0: "0", 1: "15", 2: "30", 3: "40"}
 SHEET_EVENTS = "Eventos"
 SHEET_SUMMARY = "Resumen"
 
+# ✅ (4) Sin TB_Eq1 / TB_Eq2
+# ✅ (5) Sin WinnerDeSaque
 EVENT_COLS = [
     "FechaHora",
     "Set",
@@ -42,12 +44,9 @@ EVENT_COLS = [
     "Pts_Eq2",
     "TieBreak",
     "TB_Tipo",      # "SET" / "SUPER" / ""
-    "TB_Eq1",
-    "TB_Eq2",
     "Saca",
     "SaqueEstado",
     "Resultado",
-    "WinnerDeSaque",   # "Sí" si Winner + Golpe=="Saque", "No" si Winner y no es saque, "" si no aplica
     "Golpe",
     "JugadorActor",
     "JugadorProvocador",
@@ -90,9 +89,17 @@ def segmented_toggle(
     allow_clear: bool = True,
     disabled: bool = False,
 ) -> Tuple[str, str]:
+    """
+    Segmented con estado en session_state[state_key].
+    IMPORTANTE: si allow_clear=True, aparece '—' y NO se auto-selecciona nada.
+    """
     old = st.session_state.get(state_key, "")
     opts = (["—"] + options) if allow_clear else options
-    default_value = "—" if (allow_clear and old == "") else (old if old in options else ("—" if allow_clear else options[0]))
+
+    if allow_clear:
+        default_value = "—" if old == "" else (old if old in options else "—")
+    else:
+        default_value = old if old in options else options[0]
 
     val = container.segmented_control(
         label,
@@ -199,7 +206,6 @@ def ui_compartir_excel_con_guia(excel_file: str):
         "Flujo correcto: **descargar primero** y luego **adjuntar manualmente**."
     )
 
-    # Paso 1: descargar
     st.markdown("### ✅ Paso 1: Descarga el Excel")
     with open(excel_file, "rb") as f:
         st.download_button(
@@ -216,7 +222,6 @@ def ui_compartir_excel_con_guia(excel_file: str):
         "- **Android:** **Files/Archivos** → *Downloads/Descargas*"
     )
 
-    # Paso 2: elegir canal
     st.markdown("### ✅ Paso 2: Elige cómo enviarlo")
     asunto = "Resumen Partido Padel"
     mensaje_default = "Te comparto el resumen del partido. Adjunté el Excel."
@@ -276,12 +281,17 @@ def is_star_golden_now(modo_deuce: str) -> bool:
 
 # ==========================
 # Orden sacadores por set (fuera TB)
+# Reglas pedidas:
+# - Game 1: eliges primer sacador (cualquiera)
+# - Game 2: al terminar Game 1, eliges primer sacador SOLO del otro equipo
+# - Game 3: automático el compañero del sacador del Game 1
+# - Game 4: automático el compañero del sacador del Game 2
 # ==========================
 def reset_server_order_for_set():
     st.session_state.server_order = []
     st.session_state.server_index = 0
     st.session_state.team_first_server = {1: "", 2: ""}
-    st.session_state.pending_other_team_pick = 0
+    st.session_state.pending_other_team_pick = 0  # equipo que falta elegir (1 o 2)
     st.session_state.need_other_team_pick_now = False
     st.session_state.first_server_of_set = ""
     st.session_state.current_server = ""
@@ -317,12 +327,12 @@ def set_current_server_from_order(eq1: List[str], eq2: List[str]):
 
 
 def advance_server_game(eq1: List[str], eq2: List[str]):
-    # Si aún no hay orden completo, y falta elegir el primer sacador del otro equipo:
-    # NO lo pedimos hasta que termine el primer game. La UI lo activará cuando detecte cierre de game.
+    # Si aún no hay orden completo y falta elegir el sacador del otro equipo,
+    # NO cambiamos el sacador aquí. La UI lo pedirá cuando corresponda.
     if (not st.session_state.server_order) and st.session_state.pending_other_team_pick in (1, 2):
-        # Mantener sacador actual hasta que termine el game; luego UI activará need_other_team_pick_now
         return
 
+    # Si ya hay orden completo, avanzamos al siguiente game
     if st.session_state.server_order:
         st.session_state.server_index = (st.session_state.server_index + 1) % 4
         set_current_server_from_order(eq1, eq2)
@@ -478,7 +488,6 @@ def _ganar_set_normal(eq_gana_set: int):
 
     if st.session_state.formato_partido == "3 sets" and max(st.session_state.sets) >= 2:
         st.session_state.match_over = True
-
     if st.session_state.formato_partido == "Super tie-break" and max(st.session_state.sets) >= 2:
         st.session_state.match_over = True
 
@@ -510,7 +519,15 @@ def ganar_juego(eq_gana_game: int, eq1: List[str], eq2: List[str]):
         _check_activar_super_tb_si_corresponde(eq1, eq2)
         return
 
-    # Avanza sacador SOLO si ya hay orden completo
+    # ✅ FIX: Si se cerró un game y aún falta elegir sacador del otro equipo (Game 2),
+    #        limpiamos el sacador para impedir guardar puntos hasta elegirlo.
+    if (not st.session_state.server_order) and st.session_state.pending_other_team_pick in (1, 2):
+        st.session_state.need_other_team_pick_now = True
+        st.session_state.current_server = ""
+        st.session_state.server_team = 0
+        return
+
+    # Avanza sacador SOLO si ya hay orden completo (server_order armado)
     advance_server_game(eq1, eq2)
 
 
@@ -525,13 +542,10 @@ def actualizar_marcador(eq_gana_punto: int, modo_deuce: str, eq1: List[str], eq2
         st.session_state.tb_pts[i] += 1
         a, b = st.session_state.tb_pts
         tgt = st.session_state.tb_target
-
-        # gana cuando llega a tgt con diferencia 2
         if (a >= tgt or b >= tgt) and abs(a - b) >= 2:
             _terminar_tb_y_aplicar_ganador(eq_gana_tb=eq_gana_punto)
         return
 
-    # Golden
     if modo_deuce == "Golden":
         if st.session_state.pts[i] == 3 and st.session_state.pts[j] == 3:
             ganar_juego(eq_gana_punto, eq1, eq2)
@@ -541,7 +555,6 @@ def actualizar_marcador(eq_gana_punto: int, modo_deuce: str, eq1: List[str], eq2
             ganar_juego(eq_gana_punto, eq1, eq2)
         return
 
-    # Star Point
     if modo_deuce == "Star Point":
         if is_star_golden_now(modo_deuce):
             ganar_juego(eq_gana_punto, eq1, eq2)
@@ -567,7 +580,6 @@ def actualizar_marcador(eq_gana_punto: int, modo_deuce: str, eq1: List[str], eq2
             ganar_juego(eq_gana_punto, eq1, eq2)
         return
 
-    # Advantage clásico
     if st.session_state.pts[i] == 3 and st.session_state.pts[j] == 3:
         if st.session_state.adv == 0:
             st.session_state.adv = eq_gana_punto
@@ -768,14 +780,15 @@ def validar_punto(eq1: List[str], eq2: List[str], modo_deuce: str) -> Optional[s
     jugadores_set = set(eq1 + eq2)
 
     if not st.session_state.current_server:
-        return "Falta sacador. (Si es inicio de set, elige el primer sacador)."
+        return "Falta sacador. Elígelo en el marcador."
 
     if is_star_golden_now(modo_deuce) and not st.session_state.golden_receiver:
         return "Falta seleccionar receptor para el Golden Point (Star Point)."
 
+    # ✅ (3) SaqueEstado opcional: si viene, validar; si no, se asume Correcto al guardar
     se = st.session_state.sel_saque_estado
-    if se not in SAQUE_ESTADOS:
-        return "Falta seleccionar el estado del saque."
+    if se and se not in SAQUE_ESTADOS:
+        return "Estado del saque inválido."
 
     if se == "Doble falta":
         return None
@@ -788,8 +801,12 @@ def validar_punto(eq1: List[str], eq2: List[str], modo_deuce: str) -> Optional[s
     if not golpe:
         return "Falta seleccionar el golpe."
 
-    # Winner + Saque => actor auto, sin asistencia
+    # Winner + Saque => actor auto
     if res == "Winner" and golpe == "Saque":
+        return None
+
+    # ✅ (2) ENF + Saque => actor auto (sacador)
+    if res == "Error no forzado" and golpe == "Saque":
         return None
 
     if res == "Winner":
@@ -827,6 +844,7 @@ def validar_punto(eq1: List[str], eq2: List[str], modo_deuce: str) -> Optional[s
 
 
 def make_row_base(modo_deuce: str) -> dict:
+    # ✅ (4) Sin TB_Eq1 / TB_Eq2
     return {
         "FechaHora": datetime.now(),
         "Set": set_actual(),
@@ -836,8 +854,6 @@ def make_row_base(modo_deuce: str) -> dict:
         "Pts_Eq2": puntos_texto(1, modo_deuce),
         "TieBreak": bool(st.session_state.in_tb),
         "TB_Tipo": st.session_state.tb_tipo if st.session_state.in_tb else "",
-        "TB_Eq1": st.session_state.tb_pts[0] if st.session_state.in_tb else 0,
-        "TB_Eq2": st.session_state.tb_pts[1] if st.session_state.in_tb else 0,
     }
 
 
@@ -852,7 +868,9 @@ def registrar_evento(eq1: List[str], eq2: List[str], modo_deuce: str):
         return
 
     saca = st.session_state.current_server
-    saque_estado = st.session_state.sel_saque_estado
+
+    # ✅ (3) Si no se selecciona, asumimos "Correcto"
+    saque_estado = st.session_state.sel_saque_estado or "Correcto"
 
     res = st.session_state.sel_resultado
     golpe = st.session_state.sel_golpe
@@ -865,25 +883,23 @@ def registrar_evento(eq1: List[str], eq2: List[str], modo_deuce: str):
     if saque_estado == "Doble falta":
         eq_ganador = opuesto(equipo_de(saca, eq1, eq2))
         resultado_final = "Error no forzado"
-        winner_de_saque = ""
         golpe_final = "Saque"
         actor_final = saca
         prov_final = ""
         asis_final = ""
         asistente_final = ""
     else:
-        if res == "Winner" and golpe == "Saque":
+        # ✅ (2) Winner+Saque y ENF+Saque => Actor auto sacador
+        if (res == "Winner" and golpe == "Saque") or (res == "Error no forzado" and golpe == "Saque"):
             actor_final = saca
             prov_final = ""
             asis_final = ""
             asistente_final = ""
-            winner_de_saque = "Sí"
         else:
             actor_final = actor
             prov_final = prov if res == "Error forzado" else ""
             asis_final = asis if res == "Winner" else ""
             asistente_final = asistente if (res == "Winner" and asis == "Sí") else ""
-            winner_de_saque = "No" if res == "Winner" else ""
 
         eq_ganador = ganador_equipo_por_regla(res, actor_final, prov_final, eq1, eq2)
         if eq_ganador not in (1, 2):
@@ -902,7 +918,6 @@ def registrar_evento(eq1: List[str], eq2: List[str], modo_deuce: str):
         "Saca": saca,
         "SaqueEstado": saque_estado,
         "Resultado": resultado_final,
-        "WinnerDeSaque": winner_de_saque,
         "Golpe": golpe_final,
         "JugadorActor": actor_final,
         "JugadorProvocador": prov_final,
@@ -951,7 +966,6 @@ eq1 = [p1.strip(), p2.strip()]
 eq2 = [p3.strip(), p4.strip()]
 jugadores = unique_players(eq1, eq2)
 
-# Obligatorios (en blanco al inicio)
 modo_deuce_ui = st.sidebar.selectbox(
     "Modo en 40-40",
     ["—", "Advantage", "Golden", "Star Point"],
@@ -1017,41 +1031,88 @@ if st.sidebar.button("🏁 Finalizar partido: generar resumen", use_container_wi
         st.sidebar.success("Resumen guardado en hoja 'Resumen'.")
         st.session_state.show_share = True
 
-# Marcador
+# ==========================
+# Marcador (con sacador visible y selector SOLO si aún no está elegido)
+# IMPORTANTE: aquí NO se auto-selecciona el primero (usa allow_clear=True).
+# ==========================
 top1, top2 = st.columns([2, 3])
+
+# Si está en TB, aseguramos sacador TB antes de mostrar
+if st.session_state.get("in_tb", False):
+    ensure_tb_current_server(eq1, eq2)
+
 with top1:
     st.subheader("🏁 Marcador")
+
+    sacador_actual = st.session_state.get("current_server", "")
+
     st.write(
         f"**Sets:** Eq1 {st.session_state.sets[0]} — Eq2 {st.session_state.sets[1]}\n\n"
         f"**Games:** Eq1 {st.session_state.games[0]} — Eq2 {st.session_state.games[1]}\n\n"
-        f"**Puntos:** Eq1 {puntos_texto(0, modo_deuce)} — Eq2 {puntos_texto(1, modo_deuce)}"
+        f"**Puntos:** Eq1 {puntos_texto(0, modo_deuce)} — Eq2 {puntos_texto(1, modo_deuce)}\n\n"
+        f"**Sacador:** **{sacador_actual or '—'}**"
     )
+
+    # Solo aparece selector si NO hay sacador y NO estamos en TB
+    if (not st.session_state.in_tb) and (not sacador_actual):
+        st.warning("Elige el sacador del **Game 1** (quedará fijo durante el game).")
+        elegido, _ = segmented_toggle(
+            st,
+            "Elegir sacador (Game 1)",
+            state_key="pick_server_game1",
+            options=jugadores,
+            key="seg_sacador_game1_marcador",
+            allow_clear=True,     # <- CRÍTICO: NO auto-selecciona el primero
+        )
+        if elegido:
+            st.session_state.current_server = elegido
+            st.session_state.server_team = equipo_de(elegido, eq1, eq2)
+
+            # Configurar lógica de set (Game 1)
+            st.session_state.first_server_of_set = elegido
+            t = equipo_de(elegido, eq1, eq2)
+            st.session_state.team_first_server[t] = elegido
+            st.session_state.pending_other_team_pick = opuesto(t)
+            st.session_state.need_other_team_pick_now = False
+            st.session_state.server_index = 0
+
+            # Limpiar el picker (para que no moleste luego)
+            st.session_state.pick_server_game1 = ""
+            reset_punto()
+            st.rerun()
+
     if st.session_state.in_tb:
         st.info(
             f"**{('Super TB' if st.session_state.tb_tipo == 'SUPER' else 'Tie-break')}**: "
             f"Eq1 {st.session_state.tb_pts[0]} — Eq2 {st.session_state.tb_pts[1]}  "
             f"(a {st.session_state.tb_target}, dif 2)"
         )
+
     if st.session_state.match_over:
         st.success("✅ Partido terminado.")
+
 with top2:
     st.subheader("⏱️ Timer del punto")
     st.write(f"Duración (hasta ahora): **{mmss_from_start(st.session_state.point_start)}**")
 
 st.divider()
 
+# ✅ FIX: Si aún no hay sacador (fuera TB), solo paramos si NO estamos en modo "elegir sacador Game 2"
+if (not st.session_state.in_tb) and (not st.session_state.get("current_server", "")):
+    if not (st.session_state.get("need_other_team_pick_now", False) and st.session_state.get("pending_other_team_pick", 0) in (1, 2)):
+        st.info("Selecciona el sacador en el marcador para continuar.")
+        st.stop()
+
 # ==========================
-# Sacador (COMO ANTES)
-# - Eliges primer sacador del set (game 1)
-# - Juegas TODO el game 1
-# - Al terminar el game 1, recién pide primer sacador del equipo contrario (game 2)
-# - Juegas TODO el game 2
-# - Luego arma orden completo y asume 3º y 4º automáticamente
+# Sacador (reglas por set)
+# - Durante el game, el sacador queda fijo (solo cambia al cerrar game).
+# - Al cerrar Game 1: pide sacador del otro equipo (Game 2).
+# - En Game 3 y 4: auto por orden [t1, t2, other1, other2].
 # ==========================
-st.subheader("1) Sacador (AUTO por set; TB auto)")
+st.subheader("1) Sacador (por game; set auto; TB auto)")
 
 if st.session_state.in_tb:
-    # tie-break: automático (SET TB) y SUPER TB manual diferido para el 2º sacador
+    # TB: automático con rotación
     tb_idx = st.session_state.tb_pts[0] + st.session_state.tb_pts[1]
 
     if st.session_state.tb_tipo == "SUPER" and tb_idx == 0 and not st.session_state.super_tb_first:
@@ -1072,8 +1133,7 @@ if st.session_state.in_tb:
     if st.session_state.tb_tipo == "SUPER" and tb_idx >= 1 and st.session_state.super_tb_first and not st.session_state.super_tb_second:
         team_first = equipo_de(st.session_state.super_tb_first, eq1, eq2)
         other_team_players = eq2 if team_first == 1 else eq1
-        st.warning("Super tie-break: ahora elige el 2º sacador (debe ser del otro equipo).")
-
+        st.warning("Super tie-break: ahora elige el 2º sacador (del otro equipo).")
         segmented_toggle(
             st,
             "2º sacador",
@@ -1082,7 +1142,6 @@ if st.session_state.in_tb:
             key="seg_super_tb_second_late",
             allow_clear=True,
         )
-
         if st.session_state.super_tb_second:
             first = st.session_state.super_tb_first
             second = st.session_state.super_tb_second
@@ -1091,80 +1150,50 @@ if st.session_state.in_tb:
             st.session_state.tb_rotation = [first, second, third, fourth]
             st.session_state.tb_start_idx = 0
             st.session_state.super_tb_ready = True
-
         st.stop()
 
     ensure_tb_current_server(eq1, eq2)
-    st.info(f"Sacador TB (auto): **{st.session_state.current_server or '—'}**  | Orden: {st.session_state.tb_rotation}")
+    st.info(f"Sacador TB (auto): **{st.session_state.current_server or '—'}** | Orden: {st.session_state.tb_rotation}")
 
 else:
-    # (A) si no hay primer sacador del set: pedirlo
-    if not st.session_state.first_server_of_set:
-        st.warning("Inicio del set: elige sacador del **primer game** (cualquiera de los 4).")
-        new, old = segmented_toggle(
-            st,
-            "Primer sacador del set (Game 1)",
-            state_key="first_server_of_set",
-            options=jugadores,
-            key="seg_first_server_of_set",
-            allow_clear=True,
-        )
-        if new != old and st.session_state.first_server_of_set:
-            t = equipo_de(st.session_state.first_server_of_set, eq1, eq2)
-            st.session_state.team_first_server[t] = st.session_state.first_server_of_set
-            st.session_state.pending_other_team_pick = opuesto(t)
+    # Si ya hay orden completo, solo mostramos (y el cambio ocurre al cerrar game)
+    if st.session_state.server_order:
+        st.info(f"Sacador actual (fijo durante el game): **{st.session_state.current_server}** — Orden set: {st.session_state.server_order}")
+    else:
+        # Aún no hay orden (falta elegir el sacador del otro equipo)
+        st.info(f"Sacador actual (fijo durante el game): **{st.session_state.current_server or '—'}**")
 
-            # Sacador ACTUAL (game 1) se fija y NO se vuelve a pedir hasta que termine el game
-            st.session_state.current_server = st.session_state.first_server_of_set
-            st.session_state.server_team = t
-
-            # CLAVE: no pedir el otro sacador todavía (se pedirá al cerrar el game 1)
-            st.session_state.need_other_team_pick_now = False
-
-            # Índice del orden aún no existe
-            st.session_state.server_index = 0
-            reset_punto()
-        st.stop()
-
-    # (B) si ya terminó el game 1 y falta el sacador del otro equipo, recién ahora pedirlo
+    # Si al cerrar Game 1 corresponde elegir sacador del otro equipo para Game 2
     if st.session_state.need_other_team_pick_now and st.session_state.pending_other_team_pick in (1, 2):
         pending_team = st.session_state.pending_other_team_pick
         team_players = eq1 if pending_team == 1 else eq2
-        st.warning(f"Elige el **primer sacador del Equipo {pending_team}** (Game 2).")
+        st.warning(f"Fin de Game 1: elige sacador del **Equipo {pending_team}** (Game 2).")
 
-        state_key_other = f"team_first_server_{pending_team}"
-        new, old = segmented_toggle(
+        elegido2, _ = segmented_toggle(
             st,
             f"Sacador Equipo {pending_team} (Game 2)",
-            state_key=state_key_other,
+            state_key="pick_server_game2",
             options=team_players[:2],
-            key=f"seg_pick_other_{pending_team}",
-            allow_clear=True,
+            key=f"seg_sacador_game2_{pending_team}",
+            allow_clear=True,   # <- no auto-selecciona el primero
         )
-        if new != old and st.session_state.get(state_key_other, ""):
-            chosen = st.session_state[state_key_other]
-            st.session_state.team_first_server[pending_team] = chosen
+        if elegido2:
+            st.session_state.team_first_server[pending_team] = elegido2
 
-            # Ahora sí se arma el orden completo (4 sacadores)
-            st.session_state.pending_other_team_pick = 0
-            st.session_state.need_other_team_pick_now = False
-
+            # Armar orden completo: [t1,t2,other1,other2] o [t2,t1,other2,other1]
             build_full_server_order(eq1, eq2)
 
-            # IMPORTANTE: game 2 debe ser el "t2" (sacador del equipo contrario)
-            # según build_full_server_order, server_order = [t1,t2,other1,other2] (si empieza eq1)
-            # o [t2,t1,other2,other1] (si empieza eq2).
-            # El game 1 ya fue el primero de esa lista, el game 2 debe ser el segundo => index=1
+            # Game 2 debe ser el segundo de la lista => index=1
             st.session_state.server_index = 1
             set_current_server_from_order(eq1, eq2)
 
-            reset_punto()
-        st.stop()
+            # Limpieza flags
+            st.session_state.pending_other_team_pick = 0
+            st.session_state.need_other_team_pick_now = False
+            st.session_state.pick_server_game2 = ""
 
-    # (C) si ya hay orden completo, sacador auto
-    if st.session_state.server_order:
-        set_current_server_from_order(eq1, eq2)
-        st.info(f"Sacador (auto): **{st.session_state.current_server}** — Orden set: {st.session_state.server_order}")
+            reset_punto()
+            st.rerun()
 
 st.divider()
 
@@ -1184,11 +1213,14 @@ if is_star_golden_now(modo_deuce):
     st.write(f"Receptor: **{st.session_state.golden_receiver or '—'}**")
     st.divider()
 
+# ==========================
 # Estado saque
-st.subheader("1.1) Estado del saque (antes del resultado)")
-SAQUE_UI = ["✅ Saque correcto", "❌ Error 1er saque", "❌❌ Doble falta"]
+# ✅ (1) UI solo con "Error 1er saque" (y dejamos doble falta para registrarla)
+# ✅ (3) opcional: no se exige para guardar
+# ==========================
+st.subheader("1.1) Estado del saque (opcional)")
+SAQUE_UI = ["❌ Error 1er saque", "❌❌ Doble falta"]
 MAP_UI_TO_VAL = {
-    "✅ Saque correcto": "Correcto",
     "❌ Error 1er saque": "Primer error",
     "❌❌ Doble falta": "Doble falta",
     "": "",
@@ -1222,13 +1254,7 @@ st.divider()
 if st.session_state.sel_saque_estado == "Doble falta":
     st.subheader("✅ Guardar punto (Doble falta)")
     if st.button("Guardar doble falta (auto)", type="primary", use_container_width=True, key="guardar_df"):
-        before_games = tuple(st.session_state.games)
         registrar_evento(eq1, eq2, modo_deuce)
-        after_games = tuple(st.session_state.games)
-
-        # Si se cerró game y aún falta definir sacador del equipo contrario
-        if (sum(after_games) > sum(before_games)) and (not st.session_state.server_order) and st.session_state.pending_other_team_pick in (1, 2):
-            st.session_state.need_other_team_pick_now = True
 
 else:
     st.subheader("2) Resultado del punto")
@@ -1258,9 +1284,13 @@ else:
         allow_clear=True,
     )
 
-    if st.session_state.sel_resultado == "Winner" and st.session_state.sel_golpe == "Saque":
-        st.info(f"Winner de **saque**: Actor = sacador (**{st.session_state.current_server}**) y sin asistencia.")
+    # ✅ (2) Winner+Saque y ENF+Saque => Actor auto (sacador)
+    if st.session_state.sel_golpe == "Saque" and st.session_state.sel_resultado in ("Winner", "Error no forzado"):
+        st.info(
+            f"{st.session_state.sel_resultado} de **saque**: Actor = sacador (**{st.session_state.current_server}**) (auto)."
+        )
         st.session_state.sel_actor = ""
+        st.session_state.sel_provocador = ""
         st.session_state.sel_asistencia = ""
         st.session_state.sel_asistente = ""
 
@@ -1269,7 +1299,7 @@ else:
     res = st.session_state.sel_resultado
 
     if res in ("Winner", "Error no forzado"):
-        if res == "Winner" and st.session_state.sel_golpe == "Saque":
+        if st.session_state.sel_golpe == "Saque" and res in ("Winner", "Error no forzado"):
             st.write("Actor: **(auto) Sacador**")
         else:
             st.write("Elige **Actor**:")
@@ -1328,13 +1358,7 @@ else:
     st.divider()
     st.subheader("✅ Guardar punto")
     if st.button("Guardar punto (auto)", type="primary", use_container_width=True, key="guardar_punto"):
-        before_games = tuple(st.session_state.games)
         registrar_evento(eq1, eq2, modo_deuce)
-        after_games = tuple(st.session_state.games)
-
-        # Si se cerró game y aún falta definir sacador del equipo contrario (Game 2)
-        if (sum(after_games) > sum(before_games)) and (not st.session_state.server_order) and st.session_state.pending_other_team_pick in (1, 2):
-            st.session_state.need_other_team_pick_now = True
 
 st.divider()
 
